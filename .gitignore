@@ -1,0 +1,36 @@
+# --- Secrets / environment ---
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+backend/venv/
+backend/.venv/
+*.sqlite3
+
+# --- Node / frontend ---
+node_modules/
+.next/
+frontend/out/
+npm-debug.log*
+*.tsbuildinfo
+
+# --- Runtime / generated data (never commit user uploads or generated documents) ---
+storage/
+backend/storage/
+/tmp/
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# --- Logs ---
+*.log

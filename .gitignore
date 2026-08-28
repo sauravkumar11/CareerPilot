@@ -26,6 +26,10 @@ storage/
 backend/storage/
 /tmp/
 
+# --- Celery runtime state ---
+celerybeat-schedule*
+backend/celerybeat-schedule*
+
 # --- OS / editor ---
 .DS_Store
 *.swp

@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    name: Backend — tests (SQLite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import/syntax check every module
+        run: |
+          python -m py_compile $(find app scripts tests alembic -name "*.py")
+          python -c "
+          import os, importlib, sys
+          os.environ.setdefault('SECRET_KEY', 'ci-secret-key')
+          os.environ.setdefault('DATABASE_URL', 'sqlite+aiosqlite:///:memory:')
+          os.environ.setdefault('ANTHROPIC_API_KEY', 'ci-placeholder-key')
+          failures = []
+          for root, dirs, files in os.walk('app'):
+              dirs[:] = [d for d in dirs if d != '__pycache__']
+              for f in files:
+                  if f.endswith('.py'):
+                      mod = os.path.join(root, f)[:-3].replace('/', '.')
+                      try:
+                          importlib.import_module(mod)
+                      except Exception as e:
+                          failures.append((mod, str(e)))
+          if failures:
+              print(f'{len(failures)} IMPORT FAILURES:')
+              for mod, err in failures:
+                  print(f'  {mod}: {err}')
+              sys.exit(1)
+          print('All modules imported successfully.')
+          "
+
+      - name: Run pytest
+        env:
+          SECRET_KEY: ci-secret-key
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          ANTHROPIC_API_KEY: ci-placeholder-key
+        run: python -m pytest -v
+
+  backend-migrations:
+    name: Backend — Alembic migrations (real Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: careerpilot
+          POSTGRES_PASSWORD: careerpilot
+          POSTGRES_DB: careerpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U careerpilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Upgrade head, downgrade to base, upgrade head again
+        env:
+          SECRET_KEY: ci-secret-key
+          DATABASE_URL: "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+          ANTHROPIC_API_KEY: ci-placeholder-key
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+
+      - name: Verify schema matches SQLAlchemy models exactly
+        env:
+          DATABASE_URL: "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+        run: |
+          python << 'EOF'
+          import asyncio
+          from sqlalchemy import inspect
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from app.db.base import Base
+          from app.domain import models  # noqa
+
+          async def main():
+              engine = create_async_engine(
+                  "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+              )
+              async with engine.connect() as conn:
+                  def reflect(sync_conn):
+                      insp = inspect(sync_conn)
+                      return {t: {c["name"] for c in insp.get_columns(t)} for t in insp.get_table_names()}
+                  db_schema = await conn.run_sync(reflect)
+
+              model_schema = {t: {c.name for c in tbl.columns} for t, tbl in Base.metadata.tables.items()}
+              db_tables = set(db_schema) - {"alembic_version"}
+              model_tables = set(model_schema)
+
+              mismatches = False
+              if db_tables != model_tables:
+                  print("TABLE MISMATCH:", db_tables ^ model_tables)
+                  mismatches = True
+              for table in sorted(model_tables & db_tables):
+                  diff = model_schema[table] ^ db_schema[table]
+                  if diff:
+                      print(f"COLUMN MISMATCH in {table}: {diff}")
+                      mismatches = True
+
+              await engine.dispose()
+              if mismatches:
+                  raise SystemExit(1)
+              print("Schema matches models exactly.")
+
+          asyncio.run(main())
+          EOF
+
+  frontend-checks:
+    name: Frontend — typecheck, lint, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npx next lint
+
+      - name: Audit dependencies (fail only on critical)
+        run: npm audit --audit-level=critical
+
+      - name: Production build
+        run: npm run build

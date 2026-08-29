@@ -8,7 +8,7 @@ Nothing sensitive is hard-coded. Settings are cached as a singleton via
 from functools import lru_cache
 from typing import List
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +45,26 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot",
     )
+
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def _ensure_asyncpg_driver(cls, v: str) -> str:
+        """
+        create_async_engine requires an async-capable driver in the URL
+        (postgresql+asyncpg://...). Managed Postgres providers (Render,
+        Heroku, etc.) commonly hand out a plain postgres:// or postgresql://
+        connection string instead — without this normalization,
+        create_async_engine silently falls back to the sync psycopg2
+        driver and fails with ModuleNotFoundError, since this app never
+        installs it (reproduced and confirmed against a real deployment).
+        SQLite URLs (used by the test suite) and anything already
+        specifying a driver are left untouched.
+        """
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v[len("postgres://"):]
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://"):]
+        return v
 
     # --- Redis / Celery ---
     REDIS_URL: str = Field(default="redis://localhost:6379/0")

@@ -83,3 +83,46 @@ def test_allowed_resume_mime_types_default_when_unset(clean_settings_cache, monk
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         in settings.allowed_resume_mime_types
     )
+
+
+def test_database_url_normalizes_plain_postgresql_scheme(clean_settings_cache, monkeypatch):
+    """This exact scenario crashed the app on a real Render deploy:
+    ModuleNotFoundError: No module named 'psycopg2' — because
+    create_async_engine fell back to the sync driver when the URL had no
+    async driver suffix. Render's managed Postgres connectionString is
+    exactly this plain postgresql:// format."""
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://careerpilot:careerpilot@localhost:5432/careerpilot"
+    )
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.DATABASE_URL == "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+
+
+def test_database_url_normalizes_heroku_style_postgres_scheme(clean_settings_cache, monkeypatch):
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgres://careerpilot:careerpilot@localhost:5432/careerpilot"
+    )
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.DATABASE_URL == "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+
+
+def test_database_url_leaves_already_correct_scheme_unchanged(clean_settings_cache, monkeypatch):
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+    )
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.DATABASE_URL == "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
+
+
+def test_database_url_leaves_sqlite_unchanged(clean_settings_cache, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.DATABASE_URL == "sqlite+aiosqlite:///:memory:"

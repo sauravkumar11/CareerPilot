@@ -67,10 +67,16 @@ services:
         sync: false # set manually in the Render dashboard — never commit real keys
       - key: STORAGE_ROOT
         value: /app/storage
-    disk:
-      name: careerpilot-storage
-      mountPath: /app/storage
-      sizeGB: 1
+    # NOTE: no persistent disk here — Render's free tier does not support
+    # them (confirmed by a real blueprint validation attempt, not assumed).
+    # This means uploaded resumes and generated documents will NOT persist
+    # across restarts/redeploys on the free plan, and are not shared with
+    # the celery-worker service either (each service's ephemeral filesystem
+    # is separate). Fine for demoing the app; for real persistence, either
+    # upgrade to a paid Render plan with a disk, or swap StorageService's
+    # backend to an S3-compatible one (e.g. Cloudflare R2's free tier) —
+    # storage_service.py's StorageBackend interface was built for exactly
+    # this kind of swap.
 
   - type: worker
     name: careerpilot-celery-worker
@@ -103,10 +109,7 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false # copy the same generated value the web service uses
-    disk:
-      name: careerpilot-storage
-      mountPath: /app/storage
-      sizeGB: 1
+    # No disk here either — see the note on the web service above.
 
   - type: worker
     name: careerpilot-celery-beat

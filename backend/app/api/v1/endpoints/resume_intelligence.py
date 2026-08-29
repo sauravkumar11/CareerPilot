@@ -49,10 +49,10 @@ async def upload_resume(
 ):
     settings = get_settings()
 
-    if file.content_type not in settings.ALLOWED_RESUME_MIME_TYPES:
+    if file.content_type not in settings.allowed_resume_mime_types:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type. Allowed: {', '.join(settings.ALLOWED_RESUME_MIME_TYPES)}",
+            detail=f"Unsupported file type. Allowed: {', '.join(settings.allowed_resume_mime_types)}",
         )
 
     file_bytes = await file.read()

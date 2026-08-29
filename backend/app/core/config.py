@@ -8,7 +8,7 @@ Nothing sensitive is hard-coded. Settings are cached as a singleton via
 from functools import lru_cache
 from typing import List
 
-from pydantic import AnyUrl, Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,14 +28,18 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
 
     # --- CORS ---
-    BACKEND_CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Deliberately a plain str, not List[str]: pydantic-settings attempts to
+    # JSON-decode any List[...]-typed env var before custom field_validators
+    # ever run, so a bare comma-separated string here (e.g. from a real
+    # deployment's env var, not a JSON array) raised a hard-to-diagnose
+    # SettingsError at import time — reproduced and confirmed against the
+    # exact installed pydantic-settings version. Use `.cors_origins` (below)
+    # to get the parsed list.
+    BACKEND_CORS_ORIGINS: str = Field(default="http://localhost:3000")
 
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
-    @classmethod
-    def _split_origins(cls, v):
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
+    @property
+    def cors_origins(self) -> List[str]:
+        return [origin.strip() for origin in self.BACKEND_CORS_ORIGINS.split(",") if origin.strip()]
 
     # --- Database ---
     DATABASE_URL: str = Field(
@@ -61,12 +65,15 @@ class Settings(BaseSettings):
     # --- Storage / uploads ---
     STORAGE_ROOT: str = Field(default="/app/storage")
     MAX_UPLOAD_SIZE_BYTES: int = Field(default=5 * 1024 * 1024)  # 5MB
-    ALLOWED_RESUME_MIME_TYPES: List[str] = Field(
-        default_factory=lambda: [
-            "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ]
+    # Same List[str]-via-env-var pitfall as BACKEND_CORS_ORIGINS above —
+    # kept as a plain comma-separated str for the same reason.
+    ALLOWED_RESUME_MIME_TYPES: str = Field(
+        default="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
+    @property
+    def allowed_resume_mime_types(self) -> List[str]:
+        return [t.strip() for t in self.ALLOWED_RESUME_MIME_TYPES.split(",") if t.strip()]
 
     # --- AI-call rate limiting (per user, per endpoint family) ---
     AI_CALL_RATE_LIMIT_PER_HOUR: int = Field(default=20)

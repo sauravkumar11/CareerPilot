@@ -10,7 +10,7 @@ def _mock_llm_response(text: str):
     """Builds a fake LLMResponse, as returned by LLMRouter.generate()."""
     from app.services.llm import LLMResponse
 
-    return LLMResponse(text=text, provider="gemini", model="gemini-2.5-flash", latency_ms=10.0)
+    return LLMResponse(text=text, provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
 
 
 def _patch_llm_router(return_text: str | None = None, side_effect=None):

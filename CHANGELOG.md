@@ -34,7 +34,7 @@ rewrite.
   `AsyncAnthropic` usage to `LLMRouter` — each now accepts an optional `router` constructor param
   for test injection, defaulting to the real router
 - `config.py`: `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` → `LLM_PROVIDER` (default `gemini`),
-  `GOOGLE_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`)
+  `GOOGLE_API_KEY`, `GEMINI_MODEL` (default `gemini-3.6-flash`)
 - `requirements.txt`: `anthropic==0.34.2` → `google-genai==2.20.0`. Installing this fresh surfaced
   2 real dependency conflicts, both fixed with the minimum version satisfying the actual
   constraint (verified via `pip check`, not guessed): `httpx` `0.27.2` → `0.28.1`, `pydantic`

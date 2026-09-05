@@ -11,7 +11,7 @@ def _mock_llm_response(payload):
     from app.services.llm import LLMResponse
 
     text = json.dumps(payload) if not isinstance(payload, str) else payload
-    return LLMResponse(text=text, provider="gemini", model="gemini-2.5-flash", latency_ms=10.0)
+    return LLMResponse(text=text, provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
 
 
 def _patch_llm_router(side_effect):

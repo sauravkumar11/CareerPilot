@@ -26,7 +26,7 @@ async def test_router_delegates_to_configured_provider():
     fake_provider = AsyncMock()
     fake_provider.name = "gemini"
     fake_provider.generate.return_value = LLMResponse(
-        text="hello", provider="gemini", model="gemini-2.5-flash", latency_ms=5.0
+        text="hello", provider="gemini", model="gemini-3.6-flash", latency_ms=5.0
     )
 
     router = LLMRouter(provider=fake_provider)
@@ -96,7 +96,7 @@ async def test_gemini_provider_rejects_json_mode_with_web_search():
     development time."""
     from app.services.llm import GeminiProvider, LLMError
 
-    provider = GeminiProvider(api_key="fake-key", model="gemini-2.5-flash")
+    provider = GeminiProvider(api_key="fake-key", model="gemini-3.6-flash")
 
     with pytest.raises(LLMError, match="json_mode and use_web_search together"):
         await provider.generate(
@@ -108,7 +108,7 @@ async def test_gemini_provider_requires_api_key():
     from app.services.llm import GeminiProvider, LLMError
 
     with pytest.raises(LLMError, match="GOOGLE_API_KEY is not set"):
-        GeminiProvider(api_key="", model="gemini-2.5-flash")
+        GeminiProvider(api_key="", model="gemini-3.6-flash")
 
 
 async def test_gemini_provider_wraps_api_errors_as_llm_unavailable():
@@ -119,7 +119,7 @@ async def test_gemini_provider_wraps_api_errors_as_llm_unavailable():
 
     from app.services.llm import GeminiProvider, LLMUnavailableError
 
-    provider = GeminiProvider(api_key="fake-key", model="gemini-2.5-flash")
+    provider = GeminiProvider(api_key="fake-key", model="gemini-3.6-flash")
 
     with patch.object(
         provider._client.aio.models,
@@ -139,7 +139,7 @@ async def test_gemini_provider_wraps_network_errors_as_llm_unavailable():
 
     from app.services.llm import GeminiProvider, LLMUnavailableError
 
-    provider = GeminiProvider(api_key="fake-key", model="gemini-2.5-flash")
+    provider = GeminiProvider(api_key="fake-key", model="gemini-3.6-flash")
 
     with patch.object(
         provider._client.aio.models,

@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # a config change, not a rewrite.
     LLM_PROVIDER: str = Field(default="gemini")
     GOOGLE_API_KEY: str = Field(default="")
-    GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
+    GEMINI_MODEL: str = Field(default="gemini-3.6-flash")
 
     # --- Rate limiting ---
     RATE_LIMIT_PER_MINUTE: int = 60

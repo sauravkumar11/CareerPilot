@@ -7,12 +7,9 @@ Mirrors MatchingService's strict-JSON contract and validation pattern.
 import json
 import logging
 
-import anthropic
-from anthropic import AsyncAnthropic
-
-from app.core.config import get_settings
 from app.domain.models.job import Job
 from app.domain.schemas.resume import ResumeContent
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +38,8 @@ class ResumeAnalysisError(Exception):
 
 
 class ResumeAnalysisService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     async def analyze(self, content: ResumeContent, target_job: Job | None = None) -> dict:
         system_prompt = _SYSTEM_PROMPT_WITH_TARGET if target_job else _SYSTEM_PROMPT
@@ -57,22 +52,21 @@ class ResumeAnalysisService:
             )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=1200,
+            response = await self._router.generate(
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                prompt=user_prompt,
+                max_tokens=1200,
+                json_mode=True,
+                caller="resume_analysis",
             )
-        except anthropic.APIError as exc:
-            logger.error("ResumeAnalysisService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("ResumeAnalysisService LLM call failed: %s", exc)
             raise ResumeAnalysisError(f"Resume analysis is temporarily unavailable: {exc}") from exc
 
-        raw_output = "".join(block.text for block in response.content if block.type == "text")
-
         try:
-            result = json.loads(raw_output)
+            result = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            logger.error("ResumeAnalysisService got non-JSON response: %s", raw_output[:500])
+            logger.error("ResumeAnalysisService got non-JSON response: %s", response.text[:500])
             raise ResumeAnalysisError("AI resume analysis returned an unparseable response") from exc
 
         return self._validate(result, expect_target=target_job is not None)

@@ -2,21 +2,19 @@
 ResumeParserService turns an uploaded PDF/DOCX into structured
 `ResumeContent`. Text extraction is done locally (no AI call needed for
 that part); structuring the free-form extracted text into the
-ResumeContent shape uses Claude with a strict instruction to transcribe
-only — never invent, infer, or embellish anything not present in the
-source text.
+ResumeContent shape uses the configured LLM provider with a strict
+instruction to transcribe only — never invent, infer, or embellish
+anything not present in the source text.
 """
 import io
 import json
 import logging
 
-import anthropic
 import docx
-from anthropic import AsyncAnthropic
 from pypdf import PdfReader
 
-from app.core.config import get_settings
 from app.domain.schemas.resume import ResumeContent
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +43,8 @@ class ResumeParsingError(Exception):
 
 
 class ResumeParserService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     @staticmethod
     def extract_text(file_bytes: bytes, mime_type: str) -> str:
@@ -88,22 +84,21 @@ class ResumeParserService:
 
     async def structure_text(self, raw_text: str) -> ResumeContent:
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=2000,
+            response = await self._router.generate(
                 system=_STRUCTURING_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": raw_text[:20000]}],
+                prompt=raw_text[:20000],
+                max_tokens=2000,
+                json_mode=True,
+                caller="resume_parsing",
             )
-        except anthropic.APIError as exc:
-            logger.error("ResumeParserService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("ResumeParserService LLM call failed: %s", exc)
             raise ResumeParsingError(f"Resume structuring is temporarily unavailable: {exc}") from exc
 
-        raw_output = "".join(block.text for block in response.content if block.type == "text")
-
         try:
-            parsed = json.loads(raw_output)
+            parsed = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            logger.error("ResumeParserService got non-JSON response: %s", raw_output[:500])
+            logger.error("ResumeParserService got non-JSON response: %s", response.text[:500])
             raise ResumeParsingError("Could not structure resume content — please try again") from exc
 
         try:

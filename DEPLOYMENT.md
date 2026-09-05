@@ -28,17 +28,15 @@ Next.js on Vercel is close to zero-config. No config file needed.
 
 1. [dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint** → connect the
    `CareerPilot` repo. Render reads `render.yaml` from the repo root automatically.
-2. Render will show you a preview of every service it's about to create (1 Postgres, 1 Redis, 1 web
-   service, 2 workers) before creating anything — review it. If any field is rejected (most likely
-   candidate: the `type: keyvalue` Redis service, since Render's exact naming for this has changed
-   over time), Render's error message will tell you which key, and you can fix it directly in the
-   dashboard's blueprint editor rather than starting over.
-3. Set the two `sync: false` secrets manually in the dashboard once services exist:
-   `ANTHROPIC_API_KEY` (all three services) and `BACKEND_CORS_ORIGINS` (web service — set to your
-   Vercel URL, e.g. `https://careerpilot.vercel.app`).
-4. The `celery-worker` and `celery-beat` services need the *same* `SECRET_KEY` the web service
-   generated (JWTs are signed with it) — copy the value Render generated for the web service's
-   `SECRET_KEY` into both worker services' env vars manually.
+2. Render will show you a preview of every resource it's about to create (1 Postgres, 1 Redis, 1
+   web service — no Celery worker/beat; Render's free tier doesn't support the Background Worker
+   service type at all, see CHANGELOG) before creating anything — review it. If any field is
+   rejected (most likely candidate: the `type: keyvalue` Redis service, since Render's exact
+   naming for this has changed over time), Render's error message will tell you which key, and you
+   can fix it directly in the dashboard's blueprint editor rather than starting over.
+3. Set the two `sync: false` secrets manually in the dashboard once the web service exists:
+   `GOOGLE_API_KEY` (get one at [aistudio.google.com](https://aistudio.google.com/apikey)) and
+   `BACKEND_CORS_ORIGINS` (set to your Vercel URL, e.g. `https://careerpilot.vercel.app`).
 
 ### Option B: Manual setup — slower, more reliable
 
@@ -50,24 +48,29 @@ Render dashboard, all pointed at the same GitHub repo:
    string too.
 3. **Web Service** (New → Web Service) — Docker runtime, Dockerfile path `backend/Dockerfile`,
    Docker context `backend`. Health check path `/health`. Env vars: everything in
-   `backend/.env.example`, with `DATABASE_URL`/`REDIS_URL`/`CELERY_BROKER_URL`/`CELERY_RESULT_BACKEND`
-   pointed at the connection strings from steps 1–2, plus a real `SECRET_KEY` (generate one:
-   `openssl rand -hex 32`) and your real `ANTHROPIC_API_KEY`.
-4. **Worker** (New → Background Worker) — same Docker settings as the web service, but override the
-   start command to `celery -A app.core.celery_app worker --loglevel=info`. Same env vars, same
-   `SECRET_KEY` as the web service.
-5. **Beat** (New → Background Worker again) — same as step 4, but the start command is
-   `celery -A app.core.celery_app beat --loglevel=info`.
-6. After the web service deploys, run the migration once (Render's dashboard has a "Shell" tab per
-   service): `python -m alembic upgrade head`.
+   `backend/.env.example`, with `DATABASE_URL`/`REDIS_URL` pointed at the connection strings from
+   steps 1–2, plus a real `SECRET_KEY` (generate one: `openssl rand -hex 32`) and your real
+   `GOOGLE_API_KEY`.
+4. That's it — no separate worker/beat services on the free tier (Render's free plan doesn't
+   support the Background Worker service type at all; see CHANGELOG). Migrations run automatically
+   on every container start via `backend/start.sh`, so there's no manual migration step either —
+   Render's free tier also has no Shell/exec access to run one by hand, which is exactly why that
+   automation exists.
 
 ### Either way, after the backend is live
 
 - Go back to Vercel and set `NEXT_PUBLIC_API_URL` to the real backend URL + `/api/v1`.
 - Set `BACKEND_CORS_ORIGINS` on the backend to the real Vercel URL, or the browser will block every
   request with a CORS error.
-- Seed the initial companies: use the backend's Shell tab to run
-  `python -m scripts.seed_companies`.
+- Seed the initial companies via the API directly, not the Shell tab (doesn't exist on free tier)
+  — `backend/scripts/seed_companies.py` isn't reachable without Shell access, so use
+  `POST /api/v1/companies` per company instead (needs a logged-in user's access token):
+  ```bash
+  curl -X POST https://<backend-url>/api/v1/companies \
+    -H "Authorization: Bearer <your access token>" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"Stripe","ats_provider":"greenhouse","ats_identifier":"stripe"}'
+  ```
 
 ## What to check once it's actually live
 
@@ -75,7 +78,7 @@ Render dashboard, all pointed at the same GitHub repo:
 - Register/login through the deployed frontend
 - Trigger a company sync — this is the first time the app will reach the *real* Greenhouse/Lever
   APIs (blocked in the dev sandbox, but should work fine from Render's normal network)
-- Set a real `ANTHROPIC_API_KEY` and try a resume upload — this is the first time AI generation
+- Set a real `GOOGLE_API_KEY` and try a resume upload — this is the first time AI generation
   will run for real end-to-end (also blocked/placeholder-only in the dev sandbox)
 
 These are exactly the things this project's own verification pass (see `PROJECT_STATUS.md`)

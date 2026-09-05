@@ -72,8 +72,13 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/2")
 
     # --- AI ---
-    ANTHROPIC_API_KEY: str = Field(default="")
-    ANTHROPIC_MODEL: str = Field(default="claude-sonnet-4-6")
+    # LLM_PROVIDER selects which LLMProvider implementation LLMRouter
+    # builds (see app/services/llm/). Currently only "gemini" is
+    # implemented; the field exists so adding a second provider later is
+    # a config change, not a rewrite.
+    LLM_PROVIDER: str = Field(default="gemini")
+    GOOGLE_API_KEY: str = Field(default="")
+    GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
 
     # --- Rate limiting ---
     RATE_LIMIT_PER_MINUTE: int = 60

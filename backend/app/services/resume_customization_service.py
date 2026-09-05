@@ -9,13 +9,10 @@ ever persisted.
 import json
 import logging
 
-import anthropic
-from anthropic import AsyncAnthropic
-
-from app.core.config import get_settings
 from app.domain.models.job import Job
 from app.domain.schemas.resume import ResumeContent
 from app.services.fabrication_guard import FabricationDetectedError, check_for_fabrication
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +34,8 @@ class ResumeCustomizationError(Exception):
 
 
 class ResumeCustomizationService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     async def customize(self, source_content: ResumeContent, target_job: Job) -> ResumeContent:
         user_prompt = (
@@ -50,22 +45,21 @@ class ResumeCustomizationService:
         )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=3000,
+            response = await self._router.generate(
                 system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+                prompt=user_prompt,
+                max_tokens=3000,
+                json_mode=True,
+                caller="resume_customization",
             )
-        except anthropic.APIError as exc:
-            logger.error("ResumeCustomizationService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("ResumeCustomizationService LLM call failed: %s", exc)
             raise ResumeCustomizationError(f"Resume customization is temporarily unavailable: {exc}") from exc
 
-        raw_output = "".join(block.text for block in response.content if block.type == "text")
-
         try:
-            parsed = json.loads(raw_output)
+            parsed = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            logger.error("ResumeCustomizationService got non-JSON response: %s", raw_output[:500])
+            logger.error("ResumeCustomizationService got non-JSON response: %s", response.text[:500])
             raise ResumeCustomizationError("Could not generate a tailored resume — please try again") from exc
 
         try:

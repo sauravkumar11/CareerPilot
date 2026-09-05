@@ -1,15 +1,23 @@
 """
 InterviewPrepService generates interview preparation material for a
-specific application. Two Claude calls:
+specific application. Two LLM calls:
 
-1. `fetch_latest_news` — uses the server-side `web_search` tool. This is
-   deliberately the one place in the app that does a live web search,
-   because "latest news" is exactly the kind of claim that goes stale the
-   moment it's answered from training data alone.
-2. `generate_prep` — a strict-JSON call (same contract style as
-   MatchingService/ResumeAnalysisService) that produces the company
-   summary, tech stack, likely interview rounds, and question sets,
-   grounded in the job description and the news gathered in step 1.
+1. `fetch_latest_news` — uses search grounding (use_web_search=True) via
+   LLMRouter. This is deliberately the one place in the app that does a
+   live web search, because "latest news" is exactly the kind of claim
+   that goes stale the moment it's answered from training data alone.
+   Note this call cannot also request json_mode: Gemini's API rejects
+   combining tools with response_mime_type="application/json" (confirmed
+   API behavior, not an assumption) — so this call relies on the system
+   prompt's instruction to produce a JSON array as plain text, and parses
+   it defensively (already necessary anyway, since even JSON-mode calls
+   only guarantee *valid* JSON, not that the model followed instructions
+   about content).
+2. `generate_prep` — a strict-JSON call (json_mode=True, no web search;
+   same contract style as MatchingService/ResumeAnalysisService) that
+   produces the company summary, tech stack, likely interview rounds, and
+   question sets, grounded in the job description and the news gathered
+   in step 1.
 
 If web search is unavailable or returns nothing useful, generation still
 proceeds — `latest_news` is simply an empty list, not a hard failure.
@@ -17,11 +25,8 @@ proceeds — `latest_news` is simply an empty list, not a hard failure.
 import json
 import logging
 
-import anthropic
-from anthropic import AsyncAnthropic
-
-from app.core.config import get_settings
 from app.domain.models.job import Job
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -58,26 +63,23 @@ class InterviewPrepGenerationError(Exception):
 
 
 class InterviewPrepService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     async def fetch_latest_news(self, company_name: str) -> list[str]:
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=1000,
+            response = await self._router.generate(
                 system=_NEWS_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": f"Recent news about: {company_name}"}],
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                prompt=f"Recent news about: {company_name}",
+                max_tokens=1000,
+                use_web_search=True,
+                caller="interview_prep_news",
             )
         except Exception:
             logger.exception("Web search for company news failed for %s; continuing without it", company_name)
             return []
 
-        text_blocks = [block.text for block in response.content if getattr(block, "type", None) == "text"]
-        raw_output = "".join(text_blocks).strip()
+        raw_output = response.text.strip()
 
         if not raw_output:
             return []
@@ -104,22 +106,21 @@ class InterviewPrepService:
         )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=3000,
+            response = await self._router.generate(
                 system=_PREP_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+                prompt=user_prompt,
+                max_tokens=3000,
+                json_mode=True,
+                caller="interview_prep_generate",
             )
-        except anthropic.APIError as exc:
-            logger.error("InterviewPrepService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("InterviewPrepService LLM call failed: %s", exc)
             raise InterviewPrepGenerationError(f"Interview prep generation is temporarily unavailable: {exc}") from exc
 
-        raw_output = "".join(block.text for block in response.content if block.type == "text")
-
         try:
-            result = json.loads(raw_output)
+            result = json.loads(response.text)
         except json.JSONDecodeError as exc:
-            logger.error("InterviewPrepService got non-JSON response: %s", raw_output[:500])
+            logger.error("InterviewPrepService got non-JSON response: %s", response.text[:500])
             raise InterviewPrepGenerationError("Could not generate interview prep — please try again") from exc
 
         return self._validate(result)

@@ -32,7 +32,7 @@ jobs:
           import os, importlib, sys
           os.environ.setdefault('SECRET_KEY', 'ci-secret-key')
           os.environ.setdefault('DATABASE_URL', 'sqlite+aiosqlite:///:memory:')
-          os.environ.setdefault('ANTHROPIC_API_KEY', 'ci-placeholder-key')
+          os.environ.setdefault('GOOGLE_API_KEY', 'ci-placeholder-key')
           failures = []
           for root, dirs, files in os.walk('app'):
               dirs[:] = [d for d in dirs if d != '__pycache__']
@@ -55,7 +55,7 @@ jobs:
         env:
           SECRET_KEY: ci-secret-key
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          ANTHROPIC_API_KEY: ci-placeholder-key
+          GOOGLE_API_KEY: ci-placeholder-key
         run: python -m pytest -v
 
   backend-migrations:
@@ -94,7 +94,7 @@ jobs:
         env:
           SECRET_KEY: ci-secret-key
           DATABASE_URL: "postgresql+asyncpg://careerpilot:careerpilot@localhost:5432/careerpilot"
-          ANTHROPIC_API_KEY: ci-placeholder-key
+          GOOGLE_API_KEY: ci-placeholder-key
         run: |
           python -m alembic upgrade head
           python -m alembic downgrade base

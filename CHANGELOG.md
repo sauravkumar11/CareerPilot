@@ -2,6 +2,79 @@
 
 All notable changes to CareerPilot AI are tracked here.
 
+## AI Provider Migration: Anthropic → Google Gemini (complete)
+
+### Why
+Anthropic is no longer the required AI provider; Google Gemini is now primary. The migration
+introduced a real `LLMProvider`/`GeminiProvider`/`LLMRouter` abstraction so no individual service
+depends on a specific vendor's SDK directly — a future second provider is a config change, not a
+rewrite.
+
+### Added
+- `backend/app/services/llm/` — `LLMProvider` (interface), `LLMResponse`, `LLMError`/
+  `LLMUnavailableError`/`LLMMalformedResponseError`, `GeminiProvider`, `LLMRouter`
+- `GeminiProvider` built against the real, currently-installed `google-genai==2.20.0` SDK — API
+  surface (async client, JSON mode, search grounding, error hierarchy, usage metadata field names)
+  verified by installing the package and inspecting it directly, not assumed from documentation
+- **Real, confirmed Gemini API constraint** (found via research, not assumption): `json_mode` and
+  `use_web_search` cannot be combined in a single call — Gemini rejects
+  `response_mime_type="application/json"` combined with `tools` with a 400 error. `GeminiProvider`
+  now raises a clear `LLMError` if both are requested together, and `InterviewPrepService` (the one
+  caller needing both) correctly makes two separate calls, same as it always did
+  (`fetch_latest_news` with search grounding, then `generate_prep` with JSON mode)
+- Lightweight LLM call telemetry via structured logging in `LLMRouter` (provider, model, latency,
+  success/failure, token counts) — no new database table, no prompt content ever logged
+- `tests/test_llm_router.py` — 8 new tests covering provider selection, error propagation, the
+  `json_mode`+`use_web_search` guard, and Gemini-specific error mapping (API errors, network
+  errors) verified against the real SDK's exception types
+
+### Changed
+- All 6 AI-calling services (`MatchingService`, `ResumeParserService`, `ResumeAnalysisService`,
+  `ResumeCustomizationService`, `CoverLetterService`, `InterviewPrepService`) migrated from direct
+  `AsyncAnthropic` usage to `LLMRouter` — each now accepts an optional `router` constructor param
+  for test injection, defaulting to the real router
+- `config.py`: `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` → `LLM_PROVIDER` (default `gemini`),
+  `GOOGLE_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`)
+- `requirements.txt`: `anthropic==0.34.2` → `google-genai==2.20.0`. Installing this fresh surfaced
+  2 real dependency conflicts, both fixed with the minimum version satisfying the actual
+  constraint (verified via `pip check`, not guessed): `httpx` `0.27.2` → `0.28.1`, `pydantic`
+  `2.9.2` → `2.12.5`
+- `backend/.env.example`, `render.yaml`, `.github/workflows/ci.yml`, `backend/tests/conftest.py`:
+  `ANTHROPIC_API_KEY` → `GOOGLE_API_KEY` (the CI workflow change matters — the migrated code no
+  longer reads `ANTHROPIC_API_KEY` at all, so CI would have silently broken without this)
+- 6 test mock sites across `test_resume_intelligence.py`/`test_interview_prep.py` rewritten to
+  mock at the `LLMRouter` seam (`app.services.llm.router.get_provider`) instead of per-service
+  `AsyncAnthropic` patches — the abstraction made this simpler: one patch point covers every
+  service uniformly instead of six separate ones
+- `README.md`, `DEPLOYMENT.md`: Claude/Anthropic → Gemini. `DEPLOYMENT.md` also had accumulated
+  staleness unrelated to the provider swap that got fixed while in there: still described creating
+  Celery worker/beat services (removed earlier — free tier doesn't support them) and using the
+  Shell tab for migrations/seeding (also unavailable on free tier — migrations now run
+  automatically via `start.sh`, seeding now documented via the real `POST /companies` API endpoint
+  instead)
+- Historical `CHANGELOG.md`/`PROJECT_STATUS.md` entries describing Sprint 1–3 and the verification
+  pass are left untouched — they're an accurate record of decisions made with Anthropic at the
+  time, not something to retroactively rewrite
+
+### Verified
+- `pip check`: no broken requirements after the dependency bumps
+- Real import check: every module in `app/` imports successfully with `google-genai` installed
+- Full test suite: 55/55 passing (was 47) — 6 fixed, 8 added, 0 broken
+- Full-repo grep confirms zero remaining functional Anthropic references (the only matches left
+  are historical changelog/status entries, a seed-data company literally named "Anthropic", and
+  comments explaining the migration itself)
+
+### Known limitation
+- **A real, live call to the Gemini API could not be made from the development sandbox** —
+  `generativelanguage.googleapis.com` isn't in that sandbox's network allowlist (same restriction
+  pattern as Google Fonts and the ATS provider APIs hit earlier in this project). Got as far as a
+  real, well-formed request reaching Google's servers and receiving a structured error back
+  (confirming the SDK usage is correctly formed), but never a full successful round-trip with real
+  content. This needs to be the first thing verified once a real `GOOGLE_API_KEY` is set in the
+  actual deployment.
+
+---
+
 ## Verification & Hardening Pass (complete)
 
 Real installation, real Postgres/Redis, real test runs — see `PROJECT_STATUS.md`'s "Verification

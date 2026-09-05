@@ -63,8 +63,12 @@ services:
           name: careerpilot-redis
           type: keyvalue
           property: connectionString
-      - key: ANTHROPIC_API_KEY
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GOOGLE_API_KEY
         sync: false # set manually in the Render dashboard — never commit real keys
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
       - key: STORAGE_ROOT
         value: /app/storage
     # NOTE: no persistent disk here — Render's free tier does not support

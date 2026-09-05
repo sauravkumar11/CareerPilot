@@ -1,20 +1,18 @@
 """
 AI Match Engine.
 
-Calls Claude with the user's resume content + a job description and asks
-for a structured, strictly-JSON match assessment. We never let the model
-invent skills/experience for the resume side (that's ResumeAIService's
-job and it has its own no-fabrication rule) — this service only *scores*.
+Calls the configured LLM provider (via LLMRouter) with the user's resume
+content + a job description and asks for a structured, strictly-JSON match
+assessment. We never let the model invent skills/experience for the resume
+side (that's the resume services' job and they have their own
+no-fabrication rule) — this service only *scores*.
 """
 import json
 import logging
 
-import anthropic
-from anthropic import AsyncAnthropic
-
-from app.core.config import get_settings
 from app.domain.models.job import Job
 from app.domain.models.resume import Resume
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +40,8 @@ by real project/work history."""
 
 
 class MatchingService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     async def score_match(self, resume: Resume, job: Job) -> dict:
         user_prompt = (
@@ -57,22 +53,21 @@ class MatchingService:
         )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=1000,
+            response = await self._router.generate(
                 system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+                prompt=user_prompt,
+                max_tokens=1000,
+                json_mode=True,
+                caller="matching",
             )
-        except anthropic.APIError as exc:
-            logger.error("MatchingService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("MatchingService LLM call failed: %s", exc)
             raise MatchingError(f"AI match scoring is temporarily unavailable: {exc}") from exc
 
-        raw_text = "".join(block.text for block in response.content if block.type == "text")
-
         try:
-            result = json.loads(raw_text)
+            result = json.loads(response.text)
         except json.JSONDecodeError:
-            logger.error("MatchingService got non-JSON response: %s", raw_text[:500])
+            logger.error("MatchingService got non-JSON response: %s", response.text[:500])
             raise MatchingError("AI match scoring returned an unparseable response")
 
         return self._validate(result)

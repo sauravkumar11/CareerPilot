@@ -1,7 +1,7 @@
 # CareerPilot AI
 
 An AI copilot for the software engineering job search: discovers jobs from public ATS
-APIs, scores fit against your resume with Claude, and tracks your pipeline.
+APIs, scores fit against your resume with Google Gemini, and tracks your pipeline.
 
 This is a **working vertical slice**, not the entire spec from the original brief.
 See "What's built" vs. "What's not built yet" below before treating this as a finished
@@ -37,7 +37,7 @@ careerpilot-ai/
   third-party consumption — no scraping or ToS violations. LinkedIn, Indeed, Workday
   and company-specific career APIs are **not** implemented; most either require
   partnership agreements or explicitly prohibit unauthenticated automated access.
-- **AI match engine** — calls Claude per job/resume pair for a 0–100 score, reasoning,
+- **AI match engine** — calls Google Gemini per job/resume pair for a 0–100 score, reasoning,
   missing skills, ATS compatibility, and interview likelihood.
 - **Auth** — JWT access/refresh tokens, bcrypt password hashing.
 - **Application pipeline** — save → applied → OA → interview → offer → accepted /
@@ -68,7 +68,7 @@ installed.
 ## Running locally
 
 ```bash
-cp backend/.env.example backend/.env      # fill in ANTHROPIC_API_KEY and SECRET_KEY
+cp backend/.env.example backend/.env      # fill in GOOGLE_API_KEY and SECRET_KEY
 cp frontend/.env.example frontend/.env.local
 docker compose up --build
 ```

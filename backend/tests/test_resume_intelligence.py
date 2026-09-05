@@ -6,11 +6,28 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-def _mock_anthropic_response(payload: dict):
-    """Builds a fake AsyncAnthropic().messages.create() response."""
-    block = type("Block", (), {"type": "text", "text": json.dumps(payload)})()
-    response = type("Response", (), {"content": [block]})()
-    return response
+def _mock_llm_response(text: str):
+    """Builds a fake LLMResponse, as returned by LLMRouter.generate()."""
+    from app.services.llm import LLMResponse
+
+    return LLMResponse(text=text, provider="gemini", model="gemini-2.5-flash", latency_ms=10.0)
+
+
+def _patch_llm_router(return_text: str | None = None, side_effect=None):
+    """
+    Patches app.services.llm.router.get_provider — the single seam every
+    AI-calling service goes through via LLMRouter(). Patching here instead
+    of per-service (as the pre-migration AsyncAnthropic patches did) covers
+    every service uniformly, since they all construct LLMRouter() the same
+    way.
+    """
+    mock_provider = AsyncMock()
+    if side_effect is not None:
+        mock_provider.generate.side_effect = side_effect
+    else:
+        mock_provider.generate.return_value = _mock_llm_response(return_text)
+    mock_provider.name = "gemini"
+    return patch("app.services.llm.router.get_provider", return_value=mock_provider)
 
 
 async def _register_and_login(client, email="resume-user@example.com"):
@@ -67,17 +84,12 @@ async def test_analyze_resume_returns_structured_result(client):
     )
     resume_id = create_resp.json()["id"]
 
-    fake_response = _mock_anthropic_response(
-        {
-            "ats_score": 78,
-            "extracted_skills": ["Python", "FastAPI"],
-            "strengths": ["Clear ownership of backend services"],
-            "weaknesses": ["No quantified impact metrics"],
-        }
-    )
-
-    with patch("app.services.resume_analysis_service.AsyncAnthropic") as MockClient:
-        MockClient.return_value.messages.create = AsyncMock(return_value=fake_response)
+    with _patch_llm_router(return_text=json.dumps({
+        "ats_score": 78,
+        "extracted_skills": ["Python", "FastAPI"],
+        "strengths": ["Clear ownership of backend services"],
+        "weaknesses": ["No quantified impact metrics"],
+    })):
         resp = await client.post(f"/api/v1/resumes/{resume_id}/analyze", json={}, headers=headers)
 
     assert resp.status_code == 200
@@ -110,11 +122,7 @@ async def test_analyze_resume_handles_non_json_ai_response(client):
     )
     resume_id = create_resp.json()["id"]
 
-    block = type("Block", (), {"type": "text", "text": "not valid json"})()
-    bad_response = type("Response", (), {"content": [block]})()
-
-    with patch("app.services.resume_analysis_service.AsyncAnthropic") as MockClient:
-        MockClient.return_value.messages.create = AsyncMock(return_value=bad_response)
+    with _patch_llm_router(return_text="not valid json"):
         resp = await client.post(f"/api/v1/resumes/{resume_id}/analyze", json={}, headers=headers)
 
     assert resp.status_code == 502

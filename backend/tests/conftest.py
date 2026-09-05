@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 os.environ.setdefault("STORAGE_ROOT", os.path.join(tempfile.gettempdir(), "careerpilot-test-storage"))
 
 from app.db.base import Base  # noqa: E402

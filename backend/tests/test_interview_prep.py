@@ -6,10 +6,26 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-def _text_response(payload):
+def _mock_llm_response(payload):
+    """Builds a fake LLMResponse, as returned by LLMRouter.generate()."""
+    from app.services.llm import LLMResponse
+
     text = json.dumps(payload) if not isinstance(payload, str) else payload
-    block = type("Block", (), {"type": "text", "text": text})()
-    return type("Response", (), {"content": [block]})()
+    return LLMResponse(text=text, provider="gemini", model="gemini-2.5-flash", latency_ms=10.0)
+
+
+def _patch_llm_router(side_effect):
+    """
+    Patches app.services.llm.router.get_provider — the single seam every
+    AI-calling service goes through via LLMRouter(). `side_effect` can be
+    a list (sequential return values across calls) or a callable (for
+    tests that need to distinguish the web-search call from the JSON-mode
+    call by inspecting kwargs, e.g. kwargs.get("use_web_search")).
+    """
+    mock_provider = AsyncMock()
+    mock_provider.generate.side_effect = side_effect
+    mock_provider.name = "gemini"
+    return patch("app.services.llm.router.get_provider", return_value=mock_provider)
 
 
 async def _register_and_login(client, email="prep-user@example.com"):
@@ -85,13 +101,13 @@ async def test_generate_interview_prep(client, db_session):
     company = await _create_company(client, headers)
     application_id = await _seed_job_and_application(db_session, user_id, company["id"])
 
-    news_response = _text_response(["Acme Corp raised a $50M Series C in March 2026."])
-    prep_response = _text_response(PREP_PAYLOAD)
+    news_response = _mock_llm_response(["Acme Corp raised a $50M Series C in March 2026."])
+    prep_response = _mock_llm_response(PREP_PAYLOAD)
 
-    with patch("app.services.interview_prep_service.AsyncAnthropic") as MockClient:
-        mock_create = AsyncMock(side_effect=[news_response, prep_response])
-        MockClient.return_value.messages.create = mock_create
-
+    mock_provider = AsyncMock()
+    mock_provider.generate.side_effect = [news_response, prep_response]
+    mock_provider.name = "gemini"
+    with patch("app.services.llm.router.get_provider", return_value=mock_provider):
         resp = await client.post(
             f"/api/v1/applications/{application_id}/interview-prep", json={}, headers=headers
         )
@@ -101,7 +117,7 @@ async def test_generate_interview_prep(client, db_session):
     assert body["company_summary"] == PREP_PAYLOAD["company_summary"]
     assert body["tech_stack"] == PREP_PAYLOAD["tech_stack"]
     assert len(body["latest_news"]) == 1
-    assert mock_create.call_count == 2  # one web-search call, one strict-JSON call
+    assert mock_provider.generate.call_count == 2  # one web-search call, one strict-JSON call
 
 
 async def test_regenerate_reuses_cached_news_by_default(client, db_session):
@@ -112,27 +128,27 @@ async def test_regenerate_reuses_cached_news_by_default(client, db_session):
     company = await _create_company(client, headers)
     application_id = await _seed_job_and_application(db_session, user_id, company["id"])
 
-    news_response = _text_response(["First news item."])
-    prep_response = _text_response(PREP_PAYLOAD)
+    news_response = _mock_llm_response(["First news item."])
+    prep_response = _mock_llm_response(PREP_PAYLOAD)
 
-    with patch("app.services.interview_prep_service.AsyncAnthropic") as MockClient:
-        MockClient.return_value.messages.create = AsyncMock(side_effect=[news_response, prep_response])
+    with _patch_llm_router(side_effect=[news_response, prep_response]):
         first = await client.post(
             f"/api/v1/applications/{application_id}/interview-prep", json={}, headers=headers
         )
     assert first.status_code == 200
 
-    prep_response_2 = _text_response(PREP_PAYLOAD)
-    with patch("app.services.interview_prep_service.AsyncAnthropic") as MockClient:
-        mock_create = AsyncMock(side_effect=[prep_response_2])
-        MockClient.return_value.messages.create = mock_create
+    prep_response_2 = _mock_llm_response(PREP_PAYLOAD)
+    mock_provider = AsyncMock()
+    mock_provider.generate.side_effect = [prep_response_2]
+    mock_provider.name = "gemini"
+    with patch("app.services.llm.router.get_provider", return_value=mock_provider):
         second = await client.post(
             f"/api/v1/applications/{application_id}/interview-prep", json={}, headers=headers
         )
 
     assert second.status_code == 200
     assert second.json()["latest_news"] == ["First news item."]
-    assert mock_create.call_count == 1
+    assert mock_provider.generate.call_count == 1  # only the JSON-mode call, news was cached
 
 
 async def test_get_interview_prep_before_generation_returns_404(client, db_session):
@@ -173,15 +189,14 @@ async def test_web_search_failure_does_not_block_generation(client, db_session):
     company = await _create_company(client, headers)
     application_id = await _seed_job_and_application(db_session, user_id, company["id"])
 
-    prep_response = _text_response(PREP_PAYLOAD)
+    prep_response = _mock_llm_response(PREP_PAYLOAD)
 
-    async def _create_side_effect(*args, **kwargs):
-        if kwargs.get("tools"):
+    async def _generate_side_effect(*args, **kwargs):
+        if kwargs.get("use_web_search"):
             raise RuntimeError("web search unavailable")
         return prep_response
 
-    with patch("app.services.interview_prep_service.AsyncAnthropic") as MockClient:
-        MockClient.return_value.messages.create = AsyncMock(side_effect=_create_side_effect)
+    with _patch_llm_router(side_effect=_generate_side_effect):
         resp = await client.post(
             f"/api/v1/applications/{application_id}/interview-prep", json={}, headers=headers
         )

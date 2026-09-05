@@ -6,13 +6,10 @@ projects, and skills that actually appear in the source resume.
 """
 import logging
 
-import anthropic
-from anthropic import AsyncAnthropic
-
-from app.core.config import get_settings
 from app.domain.models.job import Job
 from app.domain.schemas.resume import ResumeContent
 from app.services.fabrication_guard import FabricationDetectedError, check_for_fabrication
+from app.services.llm import LLMRouter, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +27,8 @@ class CoverLetterGenerationError(Exception):
 
 
 class CoverLetterService:
-    def __init__(self):
-        settings = get_settings()
-        self._client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self._model = settings.ANTHROPIC_MODEL
+    def __init__(self, router: LLMRouter | None = None):
+        self._router = router or LLMRouter()
 
     async def generate(self, resume_content: ResumeContent, job: Job, tone: str = "professional") -> str:
         tone_instruction = "warm, professional, and confident" if tone == "professional" else "natural and conversational, like a genuine human wrote it, while still professional"
@@ -48,17 +43,17 @@ class CoverLetterService:
         )
 
         try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=1200,
+            response = await self._router.generate(
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                prompt=user_prompt,
+                max_tokens=1200,
+                caller="cover_letter",
             )
-        except anthropic.APIError as exc:
-            logger.error("CoverLetterService Anthropic API call failed: %s", exc)
+        except LLMUnavailableError as exc:
+            logger.error("CoverLetterService LLM call failed: %s", exc)
             raise CoverLetterGenerationError(f"Cover letter generation is temporarily unavailable: {exc}") from exc
 
-        letter_text = "".join(block.text for block in response.content if block.type == "text").strip()
+        letter_text = response.text.strip()
 
         if not letter_text:
             raise CoverLetterGenerationError("AI returned an empty cover letter")
